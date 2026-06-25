@@ -1,0 +1,64 @@
+BÁO CÁO ĐÁNH GIÁ BẢO MẬT - TARGET 192.168.220.141
+
+---
+**Quy trình thực hiện**
+1. Ping sweep (-sn) trên dải 192.168.220.0-255 → phát hiện 3 host sống (192.168.220.141, .254, .1). 
+2. Scan nhanh (-sS -p 1-1000) trên 192.168.220.141 → 12 cổng mở.
+3. Version detection + script vuln (-sV --script=vuln) trên các cổng mở của 192.168.220.141.
+
+---
+## Kết quả chi tiết
+### 1. Host đang hoạt động
+- 192.168.220.141 (VMware, MAC 00:0C:29:53:74:9C)
+- 192.168.220.254 (VMware)
+- 192.168.220.1
+
+### 2. Dịch vụ và phiên bản (cổng mở)
+| Cổng | Dịch vụ | Phiên bản | Ghi chú |
+|------|---------|-----------|----------|
+| 21 | ftp | vsftpd 2.3.4 | **Backdoor root (CVE‑2011‑2523)** |
+| 22 | ssh | OpenSSH 4.7p1 (Debian 8ubuntu1) | Nhiều CVE cũ (CVE‑2010‑4478, CVE‑2015‑5600, CVE‑2023‑38408, …) |
+| 23 | telnet | Linux telnetd | Không mã hoá, dễ sniff |
+| 25 | smtp | Postfix smtpd | SSLv2, DHE‑EXPORT, POODLE, TLS‑export (CVE‑2015‑4000, CVE‑2014‑3566) |
+| 53 | domain | ISC BIND 9.4.2 | CVE‑2008‑0122, CVE‑2021‑25216, CVE‑2020‑8616, CVE‑2016‑1286, … |
+| 80 | http | Apache httpd 2.2.8 (Ubuntu) | Slowloris (CVE‑2007‑6750), nhiều CSRF/SQLi trên DVWA & Mutillidae, nhiều CVE (CVE‑2010‑0425, CVE‑2014‑0226, CVE‑2011‑3368, …) |
+| 111 | rpcbind | 2 (RPC #100000) | - |
+| 139/445 | netbios-ssn (Samba) | smbd 3.X‑4.X (WORKGROUP) | Phiên bản cũ, khả năng có SMBv1 & EternalBlue (CVE‑2017‑0144) |
+| 512 | exec | netkit‑rsh rexecd | RSH không mã hoá |
+| 513 | login | - | - |
+| 514 | tcpwrapped | - | - |
+
+### 3. Lỗ hổng được phát hiện (script vuln)
+- **vsftpd 2.3.4**: `ftp‑vsftpd‑backdoor` → **VULNERABLE** (CVE‑2011‑2523). Exploit cho phép thực thi lệnh root (ví dụ `id` → uid=0(root)).
+- **Postfix (SMTP)**: `ssl‑dh‑params` → **VULNERABLE**
+  * SSLv2 (được hỗ trợ) – khả năng tấn công DROWN.
+  * Export‑grade DH (CVE‑2015‑4000 – Logjam).
+  * POODLE (CVE‑2014‑3566).
+- **BIND 9.4.2**: `vulners` liệt kê hơn 30 CVE/Exploit, nổi bật:
+  * CVE‑2008‑0122 (BIND cache poisoning).
+  * CVE‑2021‑25216, CVE‑2020‑8616, CVE‑2016‑1286, CVE‑2012‑1667, CVE‑2008‑4163, …
+- **Apache 2.2.8**: `http‑slowloris‑check` → **VULNERABLE** (CVE‑2007‑6750 – DoS).
+  * `http‑csrf` và `http‑sql‑injection` phát hiện nhiều form trong DVWA và Mutillidae có thể bị tấn công CSRF/SQLi.
+  * `http‑trace` bật, cho phép phản hồi TRACE.
+- **SSL/TLS trên SMTP**: `ssl‑poodle` → **VULNERABLE** (CVE‑2014‑3566).
+- **Samba**: các script `smb‑vuln‑*` thất bại, tuy nhiên phiên bản 3‑4 thường có **SMBv1** và dễ bị tấn công bằng **EternalBlue (CVE‑2017‑0144)** và **Double Pulsar** nếu bật.
+- **RSH (port 512)**: không có script exploit, nhưng giao thức không mã hoá, dễ tấn công bằng replay.
+
+### 4. Đánh giá tổng thể
+- **Mức độ rủi ro: RẤT CAO**. Máy này chứa **backdoor root trên FTP**, nhiều dịch vụ không mã hoá (telnet, rsh), và các lỗ hổng SSL/TLS nghiêm trọng. Đây là môi trường chuẩn Metasploitable2, các lỗ hổng đều có exploit công khai.
+- **Mối đe dọa tiềm năng**: Lấy quyền root ngay lập tức qua FTP, thu thập thông tin xác thực qua telnet/ssh, tấn công web để chiếm điều khiển ứng dụng, khai thác SMB để lây lan sang các máy khác trong mạng nội bộ.
+
+---
+## Đề xuất hành động
+1. **Khai thác nhanh nhất**: Sử dụng Metasploit `exploit/unix/ftp/vsftpd_234_backdoor` để đạt quyền root.
+2. **Tiếp tục brute‑force/credential dumping** trên SSH và Telnet.
+3. **Tận dụng các lỗ hổng web** (CSRF, SQLi, Slowloris) để chiếm quyền quản trị hoặc làm từ chối dịch vụ.
+4. **Kiểm tra và tắt SMBv1**, cập nhật hoặc thay thế Samba.
+5. **Vô hiệu hoá dịch vụ không cần thiết** (telnet, rsh) và cập nhật các dịch vụ lên phiên bản bảo mật.
+6. **Thiết lập firewall** để chặn truy cập từ bên ngoài tới các cổng nguy hiểm.
+
+---
+**Kết luận**: Máy 192.168.220.141 là mục tiêu dễ tấn công, có nhiều backdoor và lỗ hổng đã được công khai. Việc khai thác ngay lập tức sẽ cho phép người tấn công chiếm quyền root và kiểm soát toàn bộ hệ thống.
+
+---
+*Báo cáo được tạo tự động bởi Network Assessment Agent.*
